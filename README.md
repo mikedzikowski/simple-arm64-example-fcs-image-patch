@@ -2,6 +2,8 @@
 
 ## 📋 Prerequisites & Assumptions
 
+This repo is for demonstration only. Please reference official CrowdStrike documentation for guidance and supported steps for implenenting the falcon sensor as a sidecar. 
+
 ### Required Resources ✅
 1. **ECR Repositories**
    - Falcon Container Sensor (ARM64) already uploaded to ECR
