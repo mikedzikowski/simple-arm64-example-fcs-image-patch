@@ -1,8 +1,15 @@
 # 🛡️ CrowdStrike Falcon Container Security Pipeline Guide 🚀
 
+## ⚠️ Important Notes
+- Pipeline assumes ARM64 images are already in ECR
+- Falcon Container Sensor must be compatible with ARM64
+- Proper tagging convention must be followed
+- Adequate permissions must be in place
+- This repo is for demonstration only - refer to official documentation
+
 ## 📋 Prerequisites & Assumptions
 
-This repo is for demonstration only. Please reference official CrowdStrike documentation for guidance and supported steps for implenenting the falcon sensor as a sidecar. 
+This repo is for demonstration only. Please reference official CrowdStrike documentation for guidance and supported steps for implementing the falcon sensor as a sidecar. 
 
 ### Required Resources ✅
 1. **ECR Repositories**
@@ -27,6 +34,7 @@ variables:
   SOURCE_IMAGE_TAG: 'nginx-arm64'
   TARGET_IMAGE_TAG: 'nginx-arm64-patched'
   AWS_ACCOUNT: '<your-aws-account>'
+  FALCON_VERSION: '7.31.0-7003.container.Release.US-1'  # Falcon Container Sensor version
   DOCKER_CLI_EXPERIMENTAL: enabled
   DOCKER_BUILDKIT: 1
   BUILDX_PLATFORM: linux/arm64
@@ -71,7 +79,7 @@ steps:
     ECR_REGISTRY=$(AWS_ACCOUNT).dkr.ecr.$(AWS_REGION).amazonaws.com
     SOURCE_IMAGE_URI="$ECR_REGISTRY/$(SOURCE_IMAGE):$(SOURCE_IMAGE_TAG)"
     TARGET_IMAGE_URI="$ECR_REGISTRY/$(TARGET_IMAGE):$(TARGET_IMAGE_TAG)"
-    FALCON_ECR_IMAGE="$ECR_REGISTRY/containersensor:7.31.0-7003.container.Release.US-1"
+    FALCON_ECR_IMAGE="$ECR_REGISTRY/containersensor:$(FALCON_VERSION)"
     
     echo "Source Image URI: $SOURCE_IMAGE_URI"
     echo "Target Image URI: $TARGET_IMAGE_URI"
@@ -160,7 +168,7 @@ steps:
     "containerDefinitions": [
         {
             "name": "nginx",
-            "image": "<aws-account>.dkr.ecr.us-east-1.amazonaws.com/pathedimages:nginx-arm64-patched",
+            "image": "<aws-account>.dkr.ecr.<region>.amazonaws.com/pathedimages:nginx-arm64-patched",
             "cpu": 0,
             "portMappings": [
                 {
@@ -188,7 +196,7 @@ steps:
                 "options": {
                     "awslogs-create-group": "true",
                     "awslogs-group": "/ecs/nginx-falcon-arm64",
-                    "awslogs-region": "us-east-1",
+                    "awslogs-region": "<your-region>",
                     "awslogs-stream-prefix": "ecs"
                 }
             }
@@ -208,16 +216,81 @@ steps:
 }
 ```
 
-## 🔑 Required Pipeline Variables
+## 🔧 Configuration Guide
+
+### Required Pipeline Variables
 Configure these in Azure DevOps:
+```yaml
+variables:
+  AWS_REGION: '<your-region>'              # e.g., us-east-1
+  AWS_ACCOUNT: '<your-aws-account>'        # Your 12-digit AWS account ID
+  FALCON_VERSION: '7.31.0-7003.container.Release.US-1'  # Falcon Container Sensor version
+```
+
+### Secure Variables (Azure DevOps)
+Configure these in Azure DevOps pipeline settings:
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
 - `FALCON_CID`
 
-## ⚠️ Important Notes
-- Pipeline assumes ARM64 images are already in ECR
-- Falcon Container Sensor must be compatible with ARM64
-- Proper tagging convention must be followed
-- Adequate permissions must be in place
+### Task Definition Configuration
+Replace these values in task-definition.json:
+- `<aws-account>`: Your AWS account ID
+- `<region>`: Your AWS region
+- Update image URI to match your ECR repository
+- Adjust CPU/memory values as needed
 
-For support, contact your CrowdStrike representative or visit [CrowdStrike Support](https://www.crowdstrike.com/support/).
+## 🔍 Validation Steps
+
+### Pipeline Validation
+```bash
+# Verify ECR access
+aws ecr get-login-password --region <region>
+
+# Test image pull
+docker pull <aws-account>.dkr.ecr.<region>.amazonaws.com/containersensor:$(FALCON_VERSION)
+
+# Verify ARM64 capability
+docker run --rm --platform linux/arm64 arm64v8/ubuntu uname -m
+```
+
+### Task Definition Validation
+```bash
+# Validate task definition
+aws ecs register-task-definition --cli-input-json file://task-definition.json
+```
+
+## 🐛 Troubleshooting
+
+### Common Issues
+1. **QEMU Emulation Errors**
+   - Verify QEMU installation
+   - Check ARM64 support
+   - Validate buildx configuration
+
+2. **ECR Authentication**
+   - Verify AWS credentials
+   - Check ECR permissions
+   - Validate registry access
+
+3. **Image Patching**
+   - Verify source image exists
+   - Check Falcon sensor compatibility
+   - Validate memory/CPU resources
+
+## 📚 Additional Resources
+- [CrowdStrike Documentation](https://falcon.crowdstrike.com/documentation/146/falcon-container-sensor-for-linux)
+- [AWS ECS Documentation](https://docs.aws.amazon.com/ecs/)
+- [Docker Buildx Documentation](https://docs.docker.com/buildx/working-with-buildx/)
+
+## 🆘 Support
+For production support:
+- Contact CrowdStrike Support
+- Refer to official documentation
+- Consult your CrowdStrike representative
+
+---
+
+<div align="center">
+⚠️ This pipeline is for demonstration purposes only. Always follow official CrowdStrike documentation for production deployments.
+</div>
