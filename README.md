@@ -1,7 +1,4 @@
 # 🛡️ CrowdStrike Falcon Container Security Pipeline Guide 🚀
-<div style="background-color: #FF0000; padding: 10px;">
-<img src="https://www.crowdstrike.com/wp-content/uploads/2022/01/crowdstrike-logo-1.svg" alt="CrowdStrike Logo" width="300"/>
-</div>
 
 ## 🔍 Overview
 This pipeline enables patching containers for ARM64 architecture on standard x86_64 Azure DevOps hosted agents using QEMU emulation. This is crucial for creating Falcon-protected containers that run on AWS Fargate ARM64.
