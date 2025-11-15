@@ -298,15 +298,10 @@ Configure these in Azure DevOps:
 - Verify ARM64 compatibility
 
 <div style="background-color: #666666; color: white; padding: 10px; border-radius: 5px;">
-<h2>🦅 CrowdStrike Colors</h2>
-Primary: #FF0000 (Red)<br>
-Secondary: #666666 (Gray)<br>
-Accent: #FFFFFF (White)
-</div>
 
 ---
 <div style="text-align: center; color: #FF0000;">
 <b>Powered by CrowdStrike Falcon</b> 🦅
 </div>
 
-For more information, visit [CrowdStrike Documentation](https://www.crowdstrike.com/documentation/)
+
