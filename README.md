@@ -1,49 +1,33 @@
 # 🛡️ CrowdStrike Falcon Container Security Pipeline Guide 🚀
 
-## 🔍 Overview
-This pipeline enables patching containers for ARM64 architecture on standard x86_64 Azure DevOps hosted agents using QEMU emulation. This is crucial for creating Falcon-protected containers that run on AWS Fargate ARM64.
+## 📋 Prerequisites & Assumptions
 
-## 🛠️ How It Works
+### Required Resources ✅
+1. **ECR Repositories**
+   - Falcon Container Sensor (ARM64) already uploaded to ECR
+   - Source ARM64 container image already pushed to ECR
+   - Access to create/push to target ECR repository
 
-1. **QEMU Emulation Setup** 🖥️
-```yaml
-- script: |
-    sudo apt-get install -y qemu qemu-user-static binfmt-support
-    docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-```
-This installs QEMU and registers ARM64 binary format handlers, allowing x86_64 systems to run ARM64 containers.
+### CrowdStrike Requirements 🦅
+- Valid CrowdStrike Falcon license
+- Falcon Container Sensor ARM64 version
+- Valid Falcon CID
 
-2. **Docker BuildX Configuration** 🐳
-```yaml
-docker buildx create --name arm64builder \
-  --driver docker-container \
-  --platform linux/arm64 \
-  --use
-```
-Sets up Docker's buildx feature to handle ARM64 builds through QEMU emulation.
-
-## 📋 Complete Pipeline YAML
+## 📋 Azure DevOps Pipeline (azure-pipelines.yml)
 ```yaml
 trigger: none
 
 variables:
   # Container and AWS Configuration
-  AWS_REGION: '<your-aws-region>'
-  SOURCE_IMAGE: '<your-source-image>'
-  TARGET_IMAGE: '<your-target-image>'
-  SOURCE_IMAGE_TAG: '<your-source-tag>'
-  TARGET_IMAGE_TAG: '<your-target-tag>'
+  AWS_REGION: 'us-east-1'
+  SOURCE_IMAGE: 'pathedimages'
+  TARGET_IMAGE: 'pathedimages'
+  SOURCE_IMAGE_TAG: 'nginx-arm64'
+  TARGET_IMAGE_TAG: 'nginx-arm64-patched'
   AWS_ACCOUNT: '<your-aws-account>'
-  
-  # Docker Configuration
   DOCKER_CLI_EXPERIMENTAL: enabled
   DOCKER_BUILDKIT: 1
   BUILDX_PLATFORM: linux/arm64
-
-  # Secure variables to be set in Azure DevOps UI
-  # AWS_ACCESS_KEY_ID: '<set-in-azure-devops>'
-  # AWS_SECRET_ACCESS_KEY: '<set-in-azure-devops>'
-  # FALCON_CID: '<set-in-azure-devops>'
 
 pool:
   vmImage: 'ubuntu-latest'
@@ -53,17 +37,11 @@ steps:
     echo "Setting up enhanced QEMU support..."
     sudo apt-get update
     sudo apt-get install -y qemu qemu-user-static binfmt-support
-    
-    # Setup QEMU with proper flags
     docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-    
-    # Setup buildx with proper platform support
     docker buildx create --name arm64builder \
       --driver docker-container \
       --platform linux/arm64 \
       --use
-    
-    # Verify setup
     docker buildx inspect --bootstrap
   displayName: 'Enhanced ARM64 Setup'
 
@@ -80,8 +58,6 @@ steps:
     aws configure set aws_access_key_id $(AWS_ACCESS_KEY_ID)
     aws configure set aws_secret_access_key $(AWS_SECRET_ACCESS_KEY)
     aws configure set region $(AWS_REGION)
-    
-    echo "Testing AWS CLI configuration..."
     aws sts get-caller-identity
   displayName: 'Configure AWS CLI'
   env:
@@ -93,7 +69,7 @@ steps:
     ECR_REGISTRY=$(AWS_ACCOUNT).dkr.ecr.$(AWS_REGION).amazonaws.com
     SOURCE_IMAGE_URI="$ECR_REGISTRY/$(SOURCE_IMAGE):$(SOURCE_IMAGE_TAG)"
     TARGET_IMAGE_URI="$ECR_REGISTRY/$(TARGET_IMAGE):$(TARGET_IMAGE_TAG)"
-    FALCON_ECR_IMAGE="$ECR_REGISTRY/containersensor:<falcon-version>"
+    FALCON_ECR_IMAGE="$ECR_REGISTRY/containersensor:7.31.0-7003.container.Release.US-1"
     
     echo "Source Image URI: $SOURCE_IMAGE_URI"
     echo "Target Image URI: $TARGET_IMAGE_URI"
@@ -107,11 +83,8 @@ steps:
 - script: |
     echo "Setting up Docker authentication..."
     ECR_TOKEN=$(aws ecr get-login-password --region $(AWS_REGION))
-    
     mkdir -p $HOME/.docker
-    
     echo "{\"auths\": {\"$(AWS_ACCOUNT).dkr.ecr.$(AWS_REGION).amazonaws.com\": {\"auth\": \"$(echo -n "AWS:$ECR_TOKEN" | base64 -w 0)\"}}}" > $HOME/.docker/config.json
-    
     echo $ECR_TOKEN | docker login --username AWS --password-stdin $(AWS_ACCOUNT).dkr.ecr.$(AWS_REGION).amazonaws.com
   displayName: 'Setup Docker Authentication'
   env:
@@ -121,23 +94,14 @@ steps:
 - script: |
     echo "Running patch command..."
     set -x
-    
-    # Create local registry
     docker run -d -p 5000:5000 --restart=always --name registry registry:2
-    
-    # Pull images
     docker pull --platform linux/arm64 $(SOURCE_IMAGE_URI)
     docker pull --platform linux/arm64 $(FALCON_ECR_IMAGE)
-    
-    # Tag for local registry
     docker tag $(SOURCE_IMAGE_URI) localhost:5000/source:latest
     docker tag $(FALCON_ECR_IMAGE) localhost:5000/falcon:latest
-    
-    # Push to local registry
     docker push localhost:5000/source:latest
     docker push localhost:5000/falcon:latest
     
-    # Run patch command
     docker run --platform linux/arm64 \
       --user 0:0 \
       --privileged \
@@ -158,15 +122,10 @@ steps:
         --cloud-service ECS_FARGATE \
         --image-pull-policy IfNotPresent
     
-    # Handle successful patch
     if [ $? -eq 0 ]; then
-      echo "Patch successful, tagging for ECR..."
       docker pull localhost:5000/target:latest
       docker tag localhost:5000/target:latest $(TARGET_IMAGE_URI)
-      
       aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(AWS_ACCOUNT).dkr.ecr.$(AWS_REGION).amazonaws.com
-      
-      echo "Pushing to ECR..."
       docker push $(TARGET_IMAGE_URI)
     else
       echo "Patch operation failed"
@@ -174,7 +133,6 @@ steps:
       exit 1
     fi
     
-    # Cleanup
     docker stop registry
     docker rm registry
   displayName: 'Patch Application Image with Falcon Sensor'
@@ -193,20 +151,28 @@ steps:
   condition: always()
 ```
 
-## 🐳 ECS Task Definition Template
+## 🐳 ECS Task Definition (task-definition.json)
 ```json
 {
-    "compatibilities": [
-        "EC2",
-        "FARGATE",
-        "MANAGED_INSTANCES"
-    ],
+    "family": "nginx-falcon-arm64",
     "containerDefinitions": [
         {
+            "name": "nginx",
+            "image": "<aws-account>.dkr.ecr.us-east-1.amazonaws.com/pathedimages:nginx-arm64-patched",
             "cpu": 0,
-            "environment": [],
+            "portMappings": [
+                {
+                    "name": "nginx-8080-tcp",
+                    "containerPort": 8080,
+                    "hostPort": 8080,
+                    "protocol": "tcp",
+                    "appProtocol": "http"
+                }
+            ],
             "essential": true,
-            "image": "<aws-account>.dkr.ecr.<region>.amazonaws.com/<repository>:<tag>",
+            "environment": [],
+            "mountPoints": [],
+            "volumesFrom": [],
             "linuxParameters": {
                 "capabilities": {
                     "add": [
@@ -218,35 +184,21 @@ steps:
             "logConfiguration": {
                 "logDriver": "awslogs",
                 "options": {
-                    "awslogs-group": "/ecs/<your-log-group>",
                     "awslogs-create-group": "true",
-                    "awslogs-region": "<your-region>",
+                    "awslogs-group": "/ecs/nginx-falcon-arm64",
+                    "awslogs-region": "us-east-1",
                     "awslogs-stream-prefix": "ecs"
                 }
-            },
-            "mountPoints": [],
-            "name": "<container-name>",
-            "portMappings": [
-                {
-                    "appProtocol": "http",
-                    "containerPort": 8080,
-                    "hostPort": 8080,
-                    "name": "<service-name>-8080-tcp",
-                    "protocol": "tcp"
-                }
-            ],
-            "systemControls": [],
-            "volumesFrom": []
+            }
         }
     ],
-    "cpu": "1024",
-    "executionRoleArn": "arn:aws:iam::<aws-account>:role/<role-name>",
-    "family": "<task-family-name>",
-    "memory": "3072",
+    "executionRoleArn": "arn:aws:iam::<aws-account>:role/ecsTaskExecutionRole",
     "networkMode": "awsvpc",
     "requiresCompatibilities": [
         "FARGATE"
     ],
+    "cpu": "1024",
+    "memory": "3072",
     "runtimePlatform": {
         "cpuArchitecture": "ARM64",
         "operatingSystemFamily": "LINUX"
@@ -254,51 +206,16 @@ steps:
 }
 ```
 
-## 🔑 Key Components
-- **QEMU** 🖥️: Provides hardware virtualization to run ARM64 binaries
-- **Docker BuildX** 🐳: Manages multi-architecture builds
-- **Local Registry** 📦: Temporary storage for image manipulation
-- **Falcon Container** 🦅: Patches the target image for ARM64 Fargate
-
-## ⚡ Process Flow
-1. Sets up ARM64 emulation on x86_64 agent
-2. Pulls ARM64 source image
-3. Patches with Falcon sensor (ARM64 version)
-4. Pushes patched image to ECR
-5. Ready for ARM64 Fargate deployment
-
-## 🔒 Security Notes
-- Store sensitive values in Azure DevOps variable library
-- Use service principals where possible
-- Implement least privilege access
-- Regular security audits
-- Monitor pipeline logs
-
-## 🎯 Required Pipeline Variables
+## 🔑 Required Pipeline Variables
 Configure these in Azure DevOps:
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
 - `FALCON_CID`
 
-## 🚀 Setup Instructions
-1. Create new pipeline in Azure DevOps
-2. Copy YAML content into `azure-pipelines.yml`
-3. Configure required variables in pipeline settings
-4. Update placeholder values in YAML
-5. Run pipeline
+## ⚠️ Important Notes
+- Pipeline assumes ARM64 images are already in ECR
+- Falcon Container Sensor must be compatible with ARM64
+- Proper tagging convention must be followed
+- Adequate permissions must be in place
 
-## 🔍 Troubleshooting
-- Verify QEMU installation
-- Check Docker BuildX configuration
-- Confirm AWS credentials
-- Review pipeline logs
-- Verify ARM64 compatibility
-
-<div style="background-color: #666666; color: white; padding: 10px; border-radius: 5px;">
-
----
-<div style="text-align: center; color: #FF0000;">
-<b>Powered by CrowdStrike Falcon</b> 🦅
-</div>
-
-
+For support, contact your CrowdStrike representative or visit [CrowdStrike Support](https://www.crowdstrike.com/support/).
